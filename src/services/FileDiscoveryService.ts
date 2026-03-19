@@ -67,24 +67,33 @@ export class FileDiscoveryService {
       const fileNodeMap = new Map<string, FileNode>();
       fileNodeMap.set(workspace.rootPath, workspaceRoot);
 
-      // Process each discovered file
-      for (const uri of fileUris) {
-        const absolutePath = uri.fsPath;
+      // Read the ignore limit configuration
+      const config = vscode.workspace.getConfiguration("promptTower");
+      const ignoreLimitMB = config.get<number>("ignoreFilesOverMB", 2);
+      const ignoreLimitBytes = ignoreLimitMB > 0 ? ignoreLimitMB * 1024 * 1024 : Number.MAX_SAFE_INTEGER;
 
-        try {
-          const stats = await fs.promises.stat(absolutePath);
-
-          if (stats.isFile()) {
-            this.addFileToTree(
-              absolutePath,
-              workspace,
-              fileNodeMap,
-              preserveCheckedPaths
-            );
-          }
-        } catch (error) {
-          console.warn(`Error processing file ${absolutePath}:`, error);
-        }
+      // Process files in batches to avoid blocking and improve performance
+      const CHUNK_SIZE = 500;
+      for (let i = 0; i < fileUris.length; i += CHUNK_SIZE) {
+        const chunk = fileUris.slice(i, i + CHUNK_SIZE);
+        await Promise.all(
+          chunk.map(async (uri) => {
+            const absolutePath = uri.fsPath;
+            try {
+              const stats = await fs.promises.stat(absolutePath);
+              if (stats.isFile() && stats.size <= ignoreLimitBytes) {
+                this.addFileToTree(
+                  absolutePath,
+                  workspace,
+                  fileNodeMap,
+                  preserveCheckedPaths
+                );
+              }
+            } catch (error) {
+              console.warn(`Error processing file ${absolutePath}:`, error);
+            }
+          })
+        );
       }
 
       // Build the tree structure from the flat map
