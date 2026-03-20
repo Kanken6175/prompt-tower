@@ -210,23 +210,15 @@ export class IgnorePatternService {
     const globs: string[] = [];
     
     allPatterns.forEach((pattern) => {
-      // Convert ignore patterns to findFiles-compatible globs
+      // Convert ignore patterns to findFiles-compatible globs.
+      // We only convert directory patterns to findFiles excludes to prevent creating a massive
+      // string that breaks VS Code's findFiles limit.
+      // Finer-grained file excludes are handled efficiently by our fast-fail JS ignore library check later.
       if (pattern.endsWith("/")) {
         // Directory pattern like "node_modules/"
         globs.push(`**/${pattern}**`);
-      } else if (pattern.includes("*")) {
-        // Already a glob pattern
-        if (!pattern.startsWith("**/")) {
-          globs.push(`**/${pattern}`);
-        } else {
-          globs.push(pattern);
-        }
-      } else if (pattern.startsWith(".")) {
-        // Hidden file like ".DS_Store"
-        globs.push(`**/${pattern}`);
-      } else {
-        // Simple name - could be file or directory
-        globs.push(`**/${pattern}`);
+      } else if (!pattern.includes("*") && !pattern.includes(".")) {
+        // Simple name that is likely a directory without a trailing slash (e.g. "build", "dist")
         globs.push(`**/${pattern}/**`);
       }
     });

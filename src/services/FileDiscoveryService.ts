@@ -83,6 +83,12 @@ export class FileDiscoveryService {
         await Promise.all(
           chunk.map(async (uri) => {
             const absolutePath = uri.fsPath;
+
+            // Fast fail ignoring the file via patterns before even stat-ing it
+            if (this.ignorePatternService.isPathIgnored(absolutePath, workspace)) {
+              return;
+            }
+
             try {
               const stats = await fs.promises.stat(absolutePath);
               if (stats.isFile() && stats.size <= ignoreLimitBytes) {
