@@ -16,15 +16,26 @@ export class FileDiscoveryService {
    */
   async discoverFiles(
     workspaces: Workspace[],
-    preserveCheckedPaths?: Set<string>
+    preserveCheckedPaths?: Set<string>,
+    progress?: vscode.Progress<{ message?: string; increment?: number }>
   ): Promise<FileNode[]> {
     const rootNodes: FileNode[] = [];
 
+    // Calculate equal progress share for each workspace
+    const workspaceIncrement = workspaces.length > 0 ? 100 / workspaces.length : 0;
+
     for (const workspace of workspaces) {
+      if (progress) {
+        progress.report({ message: `Scanning workspace: ${workspace.name}` });
+      }
+
       const workspaceRoot = await this.discoverWorkspaceFiles(
         workspace,
-        preserveCheckedPaths
+        preserveCheckedPaths,
+        progress,
+        workspaceIncrement
       );
+
       if (workspaceRoot) {
         rootNodes.push(workspaceRoot);
       }
@@ -38,7 +49,9 @@ export class FileDiscoveryService {
    */
   async discoverWorkspaceFiles(
     workspace: Workspace,
-    preserveCheckedPaths?: Set<string>
+    preserveCheckedPaths?: Set<string>,
+    progress?: vscode.Progress<{ message?: string; increment?: number }>,
+    totalProgressShare: number = 100
   ): Promise<FileNode | null> {
     console.log(`Discovering files for workspace: ${workspace.name}`);
 
@@ -77,8 +90,20 @@ export class FileDiscoveryService {
       const ignoreLimitBytes = ignoreLimitMB > 0 ? ignoreLimitMB * 1024 * 1024 : Number.MAX_SAFE_INTEGER;
 
       // Process files in batches to avoid blocking and improve performance
+      if (progress) {
+        progress.report({ message: `Filtering and grouping ${fileUris.length} files...` });
+      }
+
       const CHUNK_SIZE = 500;
+      const totalChunks = Math.ceil(fileUris.length / CHUNK_SIZE);
+      const progressPerChunk = totalChunks > 0 ? totalProgressShare / totalChunks : 0;
+
       for (let i = 0; i < fileUris.length; i += CHUNK_SIZE) {
+        if (progress && i % (CHUNK_SIZE * 4) === 0) {
+          // Update the message periodically so it doesn't flicker too fast
+          progress.report({ message: `Processing files (${i}/${fileUris.length})...` });
+        }
+
         const chunk = fileUris.slice(i, i + CHUNK_SIZE);
         await Promise.all(
           chunk.map(async (uri) => {
@@ -104,6 +129,10 @@ export class FileDiscoveryService {
             }
           })
         );
+
+        if (progress) {
+          progress.report({ increment: progressPerChunk });
+        }
       }
 
       // Build the tree structure from the flat map

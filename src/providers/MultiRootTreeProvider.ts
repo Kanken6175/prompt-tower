@@ -128,10 +128,19 @@ export class MultiRootTreeProvider
       this.ignorePatternService.setupIgnoreFileWatchers(workspace);
     }
 
-    // Discover files for all workspaces
-    this.rootNodes = await this.fileDiscoveryService.discoverFiles(
-      workspaces,
-      preserveCheckedPaths
+    // Discover files for all workspaces with a progress indicator in the tree view
+    await vscode.window.withProgress(
+      {
+        location: { viewId: "promptTowerView" },
+        title: "Discovering files...",
+      },
+      async (progress) => {
+        this.rootNodes = await this.fileDiscoveryService.discoverFiles(
+          workspaces,
+          preserveCheckedPaths,
+          progress
+        );
+      }
     );
 
     // Log results to help debug selection preservation
