@@ -43,15 +43,15 @@ export class FileDiscoveryService {
     console.log(`Discovering files for workspace: ${workspace.name}`);
 
     try {
-      // Get exclude patterns for this workspace
-      const excludePatterns =
-        this.ignorePatternService.getExcludeGlobPatterns(workspace);
-      const excludePattern =
-        excludePatterns.length > 1
-          ? `{${excludePatterns.join(",")}}`
-          : excludePatterns.length === 1
-          ? excludePatterns[0]
-          : null;
+      // Get a minimal set of major directories to exclude at the OS traversal level to avoid massive CPU hangs.
+      // We purposefully DO NOT pass all .gitignore rules here to prevent VS Code's findFiles (ripgrep)
+      // from exponentially slowing down on large projects when parsing complex brace expansions.
+      // The JS `ignore` library will quickly and accurately filter out the rest of the ignored files below.
+      const hardcodedExcludes = [
+        "**/.git/**", "**/node_modules/**", "**/.vscode/**", "**/build/**", "**/dist/**",
+        "**/out/**", "**/target/**", "**/.cache/**", "**/cache/**", "**/tmp/**", "**/temp/**"
+      ];
+      const excludePattern = `{${hardcodedExcludes.join(",")}}`;
 
       // Discover files using VS Code's findFiles with workspace scope
       const fileUris = await vscode.workspace.findFiles(
