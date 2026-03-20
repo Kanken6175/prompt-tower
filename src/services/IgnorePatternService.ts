@@ -198,12 +198,14 @@ export class IgnorePatternService {
    */
   getExcludeGlobPatterns(workspace: Workspace): string[] {
     const patterns = this.getIgnorePatterns(workspace);
+    // Filter out negated patterns since VS Code's findFiles exclude doesn't support them
+    // and passing them as literal exclusions breaks the file discovery.
     const allPatterns = [
       ...patterns.builtin,
       ...patterns.gitignore,
       ...patterns.towerignore,
       ...patterns.manual
-    ];
+    ].filter(p => !p.startsWith('!'));
     
     const globs: string[] = [];
     

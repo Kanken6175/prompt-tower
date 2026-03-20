@@ -47,7 +47,11 @@ export class FileDiscoveryService {
       const excludePatterns =
         this.ignorePatternService.getExcludeGlobPatterns(workspace);
       const excludePattern =
-        excludePatterns.length > 0 ? `{${excludePatterns.join(",")}}` : null;
+        excludePatterns.length > 1
+          ? `{${excludePatterns.join(",")}}`
+          : excludePatterns.length === 1
+          ? excludePatterns[0]
+          : null;
 
       // Discover files using VS Code's findFiles with workspace scope
       const fileUris = await vscode.workspace.findFiles(

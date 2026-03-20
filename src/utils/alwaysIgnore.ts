@@ -191,7 +191,6 @@ export const ALWAYS_IGNORE = [
 
   // Virtual machine files
   "*.vdi",
-  "*.vhd",
   "*.vmdk",
   "*.qcow2",
   "*.vhdx",
