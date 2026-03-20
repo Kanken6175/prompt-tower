@@ -219,24 +219,20 @@ export class FileDiscoveryService {
       currentPath !== workspace.rootPath &&
       currentPath !== path.dirname(currentPath)
     ) {
-      if (!fileNodeMap.has(currentPath)) {
-        pathsToCreate.unshift(currentPath); // Add to beginning to create from root down
+      if (fileNodeMap.has(currentPath)) {
+        break; // If a parent exists, all its ancestors must exist
       }
+      pathsToCreate.unshift(currentPath); // Add to beginning to create from root down
       currentPath = path.dirname(currentPath);
     }
 
     // Create directory nodes from root down
     for (const dirPath of pathsToCreate) {
       if (!fileNodeMap.has(dirPath)) {
-        // Skip if ignored
-        if (this.ignorePatternService.isPathIgnored(dirPath, workspace)) {
-          continue;
-        }
-
-        // Check if directory actually exists
-        if (!fs.existsSync(dirPath) || !fs.statSync(dirPath).isDirectory()) {
-          continue;
-        }
+        // We DO NOT check isPathIgnored or fs.existsSync here.
+        // If findFiles returned a valid, unignored file inside this directory structure,
+        // we MUST create the parent directory nodes so the file isn't orphaned from the tree.
+        // This solves the bug where deep files in ignored folders (via ! negations) would never render.
 
         const relativePath = path.relative(workspace.rootPath, dirPath);
         // Use original path for consistent matching across platforms
