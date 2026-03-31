@@ -40,6 +40,11 @@
           "default": 500,
           "description": "Show warning when selecting files larger than this size (in KB)"
         },
+        "promptTower.ignoreFilesOverMB": {
+          "type": "number",
+          "default": 2,
+          "description": "Ignore files larger than this size (in MB) during discovery. Set to 0 to disable."
+        },
         "promptTower.outputFormat": {
           "type": "object",
           "description": "Customize the output format for generated context files.",

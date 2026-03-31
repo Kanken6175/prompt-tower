@@ -16,15 +16,26 @@ export class FileDiscoveryService {
    */
   async discoverFiles(
     workspaces: Workspace[],
-    preserveCheckedPaths?: Set<string>
+    preserveCheckedPaths?: Set<string>,
+    progress?: vscode.Progress<{ message?: string; increment?: number }>
   ): Promise<FileNode[]> {
     const rootNodes: FileNode[] = [];
 
+    // Calculate equal progress share for each workspace
+    const workspaceIncrement = workspaces.length > 0 ? 100 / workspaces.length : 0;
+
     for (const workspace of workspaces) {
+      if (progress) {
+        progress.report({ message: `Scanning workspace: ${workspace.name}` });
+      }
+
       const workspaceRoot = await this.discoverWorkspaceFiles(
         workspace,
-        preserveCheckedPaths
+        preserveCheckedPaths,
+        progress,
+        workspaceIncrement
       );
+
       if (workspaceRoot) {
         rootNodes.push(workspaceRoot);
       }
@@ -38,16 +49,22 @@ export class FileDiscoveryService {
    */
   async discoverWorkspaceFiles(
     workspace: Workspace,
-    preserveCheckedPaths?: Set<string>
+    preserveCheckedPaths?: Set<string>,
+    progress?: vscode.Progress<{ message?: string; increment?: number }>,
+    totalProgressShare: number = 100
   ): Promise<FileNode | null> {
     console.log(`Discovering files for workspace: ${workspace.name}`);
 
     try {
-      // Get exclude patterns for this workspace
-      const excludePatterns =
-        this.ignorePatternService.getExcludeGlobPatterns(workspace);
-      const excludePattern =
-        excludePatterns.length > 0 ? `{${excludePatterns.join(",")}}` : null;
+      // Get a minimal set of major directories to exclude at the OS traversal level to avoid massive CPU hangs.
+      // We purposefully DO NOT pass all .gitignore rules here to prevent VS Code's findFiles (ripgrep)
+      // from exponentially slowing down on large projects when parsing complex brace expansions.
+      // The JS `ignore` library will quickly and accurately filter out the rest of the ignored files below.
+      const hardcodedExcludes = [
+        "**/.git/**", "**/node_modules/**", "**/.vscode/**", "**/build/**", "**/dist/**",
+        "**/out/**", "**/target/**", "**/.cache/**", "**/cache/**", "**/tmp/**", "**/temp/**"
+      ];
+      const excludePattern = `{${hardcodedExcludes.join(",")}}`;
 
       // Discover files using VS Code's findFiles with workspace scope
       const fileUris = await vscode.workspace.findFiles(
@@ -67,23 +84,54 @@ export class FileDiscoveryService {
       const fileNodeMap = new Map<string, FileNode>();
       fileNodeMap.set(workspace.rootPath, workspaceRoot);
 
-      // Process each discovered file
-      for (const uri of fileUris) {
-        const absolutePath = uri.fsPath;
+      // Read the ignore limit configuration
+      const config = vscode.workspace.getConfiguration("promptTower");
+      const ignoreLimitMB = config.get<number>("ignoreFilesOverMB", 2);
+      const ignoreLimitBytes = ignoreLimitMB > 0 ? ignoreLimitMB * 1024 * 1024 : Number.MAX_SAFE_INTEGER;
 
-        try {
-          const stats = await fs.promises.stat(absolutePath);
+      // Process files in batches to avoid blocking and improve performance
+      if (progress) {
+        progress.report({ message: `Filtering and grouping ${fileUris.length} files...` });
+      }
 
-          if (stats.isFile()) {
-            this.addFileToTree(
-              absolutePath,
-              workspace,
-              fileNodeMap,
-              preserveCheckedPaths
-            );
-          }
-        } catch (error) {
-          console.warn(`Error processing file ${absolutePath}:`, error);
+      const CHUNK_SIZE = 500;
+      const totalChunks = Math.ceil(fileUris.length / CHUNK_SIZE);
+      const progressPerChunk = totalChunks > 0 ? totalProgressShare / totalChunks : 0;
+
+      for (let i = 0; i < fileUris.length; i += CHUNK_SIZE) {
+        if (progress && i % (CHUNK_SIZE * 4) === 0) {
+          // Update the message periodically so it doesn't flicker too fast
+          progress.report({ message: `Processing files (${i}/${fileUris.length})...` });
+        }
+
+        const chunk = fileUris.slice(i, i + CHUNK_SIZE);
+        await Promise.all(
+          chunk.map(async (uri) => {
+            const absolutePath = uri.fsPath;
+
+            // Fast fail ignoring the file via patterns before even stat-ing it
+            if (this.ignorePatternService.isPathIgnored(absolutePath, workspace)) {
+              return;
+            }
+
+            try {
+              const stats = await fs.promises.stat(absolutePath);
+              if (stats.isFile() && stats.size <= ignoreLimitBytes) {
+                this.addFileToTree(
+                  absolutePath,
+                  workspace,
+                  fileNodeMap,
+                  preserveCheckedPaths
+                );
+              }
+            } catch (error) {
+              console.warn(`Error processing file ${absolutePath}:`, error);
+            }
+          })
+        );
+
+        if (progress) {
+          progress.report({ increment: progressPerChunk });
         }
       }
 
@@ -171,24 +219,20 @@ export class FileDiscoveryService {
       currentPath !== workspace.rootPath &&
       currentPath !== path.dirname(currentPath)
     ) {
-      if (!fileNodeMap.has(currentPath)) {
-        pathsToCreate.unshift(currentPath); // Add to beginning to create from root down
+      if (fileNodeMap.has(currentPath)) {
+        break; // If a parent exists, all its ancestors must exist
       }
+      pathsToCreate.unshift(currentPath); // Add to beginning to create from root down
       currentPath = path.dirname(currentPath);
     }
 
     // Create directory nodes from root down
     for (const dirPath of pathsToCreate) {
       if (!fileNodeMap.has(dirPath)) {
-        // Skip if ignored
-        if (this.ignorePatternService.isPathIgnored(dirPath, workspace)) {
-          continue;
-        }
-
-        // Check if directory actually exists
-        if (!fs.existsSync(dirPath) || !fs.statSync(dirPath).isDirectory()) {
-          continue;
-        }
+        // We DO NOT check isPathIgnored or fs.existsSync here.
+        // If findFiles returned a valid, unignored file inside this directory structure,
+        // we MUST create the parent directory nodes so the file isn't orphaned from the tree.
+        // This solves the bug where deep files in ignored folders (via ! negations) would never render.
 
         const relativePath = path.relative(workspace.rootPath, dirPath);
         // Use original path for consistent matching across platforms
